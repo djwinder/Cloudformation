@@ -81,7 +81,7 @@
             "SecurityGroupIds" : [{ "Ref" : "SecurityGroup" }],	
             "SubnetId" : { "Ref" : "SubnetId" },
             "KeyName" : { "Ref" : "KeyName" },
-   	 "UserData": {
+   			"UserData": {
                 "Fn::Base64": {
                    "Fn::Join": [ "", [
    	              "public_hostname=", { "Ref" : "IPAddress" }, "\n",				

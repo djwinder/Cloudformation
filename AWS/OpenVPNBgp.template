@@ -1,7 +1,7 @@
 {
   "AWSTemplateFormatVersion" : "2010-09-09",
 
-  "Description" : "NAT Monitor: Tempalte to launch two NAT nodes in an existing VPC in a hot/hot NAT configuration. This template assumes you already have a VPC configured with public subnets in 2 AZs, cooresponding subnets, and route tables configured for your private subnets.",
+  "Description" : "NAT Monitor: Template to launch two NAT nodes in an existing VPC in a hot/hot NAT configuration. This template assumes you already have a VPC configured with public subnets in 2 AZs, cooresponding subnets, and route tables configured for your private subnets.",
 
   "Parameters" : {
 
@@ -11,12 +11,12 @@
       "MinLength": "1",
       "MaxLength": "64",
       "AllowedPattern" : "[-_ a-zA-Z0-9]*",
-      "Default" : "Lab",
+      "Default" : "development",
       "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
     },
     "VPC" : {
       "Description" : "VPC ID for the NAT instances (required for creating NAT security group).",
-      "Type" : "String",
+      "Type" : "AWS::EC2::VPC::Id",
       "Default" : "vpc-########"
     },
     "VpcCidr" : {
@@ -24,22 +24,22 @@
       "Type" : "String",
       "Default" : "10.0.0.0/16"
     },
-    "PublicSubnet1" : {
+    "PublicSubnetA" : {
       "Description" : "Subnet ID for the public subnet to launch the first NAT instance into.",
       "Type" : "String",
       "Default" : "subnet-########"
     },
-    "PublicSubnet2" : {
+    "PublicSubnetB" : {
       "Description" : "Subnet ID for the public subnet to launch the second NAT instance into.",
       "Type" : "String",
       "Default" : "subnet-XXXXXXXX"
     },
-    "PrivateRouteTable1" : {
+    "PrivateRouteTableA" : {
       "Description" : "Route Table ID to associate default route with NAT instance 1.",
       "Type" : "String",
       "Default" : "rtb-########"
     },
-    "PrivateRouteTable2" : {
+    "PrivateRouteTableB" : {
       "Description" : "Route Table ID to associate default route with NAT instance 2.",
       "Type" : "String",
       "Default" : "rtb-YYYYYYYY"
@@ -47,8 +47,8 @@
     "NATNodeInstanceType" : {
       "Description" : "Instance type for NAT nodes.",
       "Type" : "String",
-      "Default" : "m1.small",
-      "AllowedValues" : [ "t1.micro","m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge","c1.medium","c1.xlarge","cc1.4xlarge","cc2.8xlarge","cg1.4xlarge"],
+      "Default" : "t2.micro",
+      "AllowedValues" : [ "t2.micro","m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge","c1.medium","c1.xlarge","cc1.4xlarge","cc2.8xlarge","cg1.4xlarge"],
       "ConstraintDescription" : "must be a valid EC2 instance type."
     },
 	"NumberOfPings" : {
@@ -80,7 +80,7 @@
 
   "Mappings" : {
     "AWSNATAMI" : {
-      "us-east-1"      : { "AMI" : "ami-54cf5c3d" },
+      "us-east-1"      : { "AMI" : "ami-4868ab25" },
       "us-west-2"      : { "AMI" : "ami-8e27adbe" },
       "us-west-1"      : { "AMI" : "ami-b63210f3" },
       "eu-west-1"      : { "AMI" : "ami-3c5f5748" },
@@ -112,17 +112,28 @@
                 "Statement": [ {
                    "Effect": "Allow",
                    "Action": [
-			"ec2:DescribeInstances",
-			"ec2:DescribeRouteTables",
-			"ec2:CreateRoute",
-			"ec2:ReplaceRoute",
-			"ec2:StartInstances",
-			"ec2:StopInstances"
-		   ],
+						"ec2:DescribeInstances",
+						"ec2:DescribeRouteTables",
+						"ec2:CreateRoute",
+						"ec2:ReplaceRoute",
+						"ec2:StartInstances",
+						"ec2:StopInstances"
+					   ],
                    "Resource": "*"
                 } ]
-             }
-             } ]
+				}
+             },{
+			 "PolicyName": "Get_Configuration",
+             "PolicyDocument": {
+                "Statement": [ {
+                   "Effect": "Allow",
+                   "Action": [
+						"s3:GetObject"
+					   ],
+                   "Resource": "arn:aws:s3:::o1-vpn-configuration/*"
+                } ]
+				}
+			 } ]
           }
     },
 
@@ -155,77 +166,174 @@
     "NAT1Instance" : {
       "Type" : "AWS::EC2::Instance",
       "Metadata" : {
-        "Comment1" : "Create NAT #1"
+        "Comment1" : "Create NAT #1",
+		"AWS::CloudFormation::Authentication" : {
+            "S3AccessCreds":{
+                "type":"S3",
+                "roleName":{
+					"Ref":"NATRole"
+                }
+			}
+		},
+        "AWS::CloudFormation::Init" : {
+		"configSets" : {
+            "InstallAndRun" : [ "NAT", "BGP" ]
+          },
+        "NAT" : {
+          "files" : {
+            "/root/config.txt":{
+                "source":"http://o1-vpn-configuration.s3.amazonaws.com/config.txt",
+                "mode":"000400",
+                "owner":"root",
+                "group":"root",
+				"authentication":"S3AccessCreds"
+                 },
+			"/etc/cfn/cfn-hup.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "[main]\n",
+                  "stack=", { "Ref" : "AWS::StackId" }, "\n",
+                  "region=", { "Ref" : "AWS::Region" }, "\n"
+                ]]},
+                "mode"    : "000400",
+                "owner"   : "root",
+                "group"   : "root"
+              },
+
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "[cfn-auto-reloader-hook]\n",
+                  "triggers=post.update\n",
+                  "path=Resources.NAT1Instance.Metadata.AWS::CloudFormation::Init\n",
+                  "action=/opt/aws/bin/cfn-init -v ",
+                  "         --stack ", { "Ref" : "AWS::StackName" },
+                  "         --resource NAT1Instance ",
+                  "         --region ", { "Ref" : "AWS::Region" }, "\n",
+                  "runas=root\n"
+                ]]}
+              }
+			},
+		  "services" : {
+              "sysvinit" : {
+                "cfn-hup" : { "enabled" : "true", "ensureRunning" : "true",
+                              "files" : ["/etc/cfn/cfn-hup.conf", "/etc/cfn/hooks.d/cfn-auto-reloader.conf"]}
+              }
+            },
+          "commands" : {
+            "01_Install_NAT" : {
+				"command":{ 
+					 "Fn::Join" : ["", [
+				 "#!/bin/bash -v\n",
+				  "yum update -y aws*\n",
+				  ". /etc/profile.d/aws-apitools-common.sh\n",
+				  "# Configure iptables\n",
+				  "/sbin/iptables -t nat -A POSTROUTING -o eth0 -s 0.0.0.0/0 -j MASQUERADE\n",
+				  "/sbin/iptables-save > /etc/sysconfig/iptables\n",
+				  "# Configure ip forwarding and redirects\n",
+				  "echo 1 >  /proc/sys/net/ipv4/ip_forward && echo 0 >  /proc/sys/net/ipv4/conf/eth0/send_redirects\n",
+				  "mkdir -p /etc/sysctl.d/\n",
+				  "cat <<EOF > /etc/sysctl.d/nat.conf\n",
+				  "net.ipv4.ip_forward = 1\n",
+				  "net.ipv4.conf.eth0.send_redirects = 0\n",
+				  "EOF\n"
+				  
+					]]}
+					},
+			"02_Configure_HA" : {
+				"command":{ 
+					"Fn::Join" : ["", [
+				 "#!/bin/bash -v\n",
+				 "# Download nat_monitor.sh and configure\n",
+				 "cd /root\n",
+				  "wget http://media.amazonwebservices.com/articles/nat_monitor_files/nat_monitor.sh\n",
+				  "# Wait for NAT #2 to boot up and update PrivateRouteTable2\n",
+				  "sleep 180\n",
+				  "NAT_ID=\n",
+				  "# CloudFormation should have updated the PrivateRouteTable2 by now (due to yum update), however loop to make sure\n",
+				  "while [ \"$NAT_ID\" == \"\" ]; do\n",
+				  "  sleep 60\n",
+				  "  NAT_ID=`/opt/aws/bin/ec2-describe-route-tables ", { "Ref" : "PrivateRouteTableB" }, 
+					  " -U https://ec2.", { "Ref" : "AWS::Region" }, ".amazonaws.com | grep 0.0.0.0/0 | awk '{print $2;}'`\n",
+				  "  #echo `date` \"-- NAT_ID=$NAT_ID\" >> /tmp/test.log\n",
+				  "done\n",
+				  "# Update NAT_ID, NAT_RT_ID, and My_RT_ID\n",
+				  "sed \"s/NAT_ID=/NAT_ID=$NAT_ID/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
+				  "sed \"s/NAT_RT_ID=/NAT_RT_ID=",
+				  { "Ref" : "PrivateRouteTableB" },
+				  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
+				  "sed \"s/My_RT_ID=/My_RT_ID=",
+				  { "Ref" : "PrivateRouteTableA" },
+				  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
+				  "sed \"s/EC2_URL=/EC2_URL=https:\\/\\/ec2.",
+				  { "Ref" : "AWS::Region" }, ".amazonaws.com",
+				  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
+				  "sed \"s/Num_Pings=3/Num_Pings=",
+				  { "Ref" : "NumberOfPings" },
+				  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
+				  "sed \"s/Ping_Timeout=1/Ping_Timeout=",
+				  { "Ref" : "PingTimeout" },
+				  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
+				  "sed \"s/Wait_Between_Pings=2/Wait_Between_Pings=",
+				  { "Ref" : "WaitBetweenPings" },
+				  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
+				  "sed \"s/Wait_for_Instance_Stop=60/Wait_for_Instance_Stop=",
+				  { "Ref" : "WaitForInstanceStop" },
+				  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
+				  "sed \"s/Wait_for_Instance_Start=300/Wait_for_Instance_Start=",
+				  { "Ref" : "WaitForInstanceStart" },
+				  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
+					  "mv /root/nat_monitor.tmp /root/nat_monitor.sh\n",
+					  "chmod a+x /root/nat_monitor.sh\n",
+				  "#echo '@reboot /root/nat_monitor.sh > /tmp/nat_monitor.log' | crontab\n",
+				  "#/root/nat_monitor.sh > /tmp/nat_monitor.log &\n"
+				  ]]
+				}
+				}
+			}
+
+          
+        
+		},
+		"BGP":{
+			"files" : {
+            "/root/config1.txt":{
+                "source":"http://o1-vpn-configuration.s3.amazonaws.com/config.txt",
+                "mode":"000400",
+                "owner":"root",
+                "group":"root",
+				"authentication":"S3AccessCreds"
+					}
+				}
+			}
+		}
       },
       "Properties" : {
         "InstanceType" : { "Ref" : "NATNodeInstanceType" } ,
         "KeyName" : { "Ref" : "KeyName" },
-	"IamInstanceProfile" : { "Ref" : "NATRoleProfile" },
-        "SubnetId" : { "Ref" : "PublicSubnet1" },
+		"IamInstanceProfile" : { "Ref" : "NATRoleProfile" },
+        "SubnetId" : { "Ref" : "PublicSubnetA" },
         "SourceDestCheck" : "false",
         "ImageId" : { "Fn::FindInMap" : [ "AWSNATAMI", { "Ref" : "AWS::Region" }, "AMI" ]},
         "SecurityGroupIds" : [{ "Ref" : "NATSecurityGroup" }],
         "Tags" : [
           { "Key" : "Name", "Value" : "NAT #1" }
         ],
-        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
-          "#!/bin/bash -v\n",
-	  "yum update -y aws*\n",
-	  ". /etc/profile.d/aws-apitools-common.sh\n",
-          "# Configure iptables\n",
-	  "/sbin/iptables -t nat -A POSTROUTING -o eth0 -s 0.0.0.0/0 -j MASQUERADE\n",
-	  "/sbin/iptables-save > /etc/sysconfig/iptables\n",
-          "# Configure ip forwarding and redirects\n",
-          "echo 1 >  /proc/sys/net/ipv4/ip_forward && echo 0 >  /proc/sys/net/ipv4/conf/eth0/send_redirects\n",
-	  "mkdir -p /etc/sysctl.d/\n",
-	  "cat <<EOF > /etc/sysctl.d/nat.conf\n",
-	  "net.ipv4.ip_forward = 1\n",
-	  "net.ipv4.conf.eth0.send_redirects = 0\n",
-	  "EOF\n",
-          "# Download nat_monitor.sh and configure\n",
-          "cd /root\n",
-	  "wget http://media.amazonwebservices.com/articles/nat_monitor_files/nat_monitor.sh\n",
-	  "# Wait for NAT #2 to boot up and update PrivateRouteTable2\n",
-	  "sleep 180\n",
-	  "NAT_ID=\n",
-	  "# CloudFormation should have updated the PrivateRouteTable2 by now (due to yum update), however loop to make sure\n",
-	  "while [ \"$NAT_ID\" == \"\" ]; do\n",
-	  "  sleep 60\n",
-	  "  NAT_ID=`/opt/aws/bin/ec2-describe-route-tables ", { "Ref" : "PrivateRouteTable2" }, 
-          " -U https://ec2.", { "Ref" : "AWS::Region" }, ".amazonaws.com | grep 0.0.0.0/0 | awk '{print $2;}'`\n",
-	  "  #echo `date` \"-- NAT_ID=$NAT_ID\" >> /tmp/test.log\n",
-	  "done\n",
-	  "# Update NAT_ID, NAT_RT_ID, and My_RT_ID\n",
-	  "sed \"s/NAT_ID=/NAT_ID=$NAT_ID/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
-	  "sed \"s/NAT_RT_ID=/NAT_RT_ID=",
-	  { "Ref" : "PrivateRouteTable2" },
-	  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
-	  "sed \"s/My_RT_ID=/My_RT_ID=",
-	  { "Ref" : "PrivateRouteTable1" },
-	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
-	  "sed \"s/EC2_URL=/EC2_URL=https:\\/\\/ec2.",
-	  { "Ref" : "AWS::Region" }, ".amazonaws.com",
-	  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
-	  "sed \"s/Num_Pings=3/Num_Pings=",
-	  { "Ref" : "NumberOfPings" },
-	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
-	  "sed \"s/Ping_Timeout=1/Ping_Timeout=",
-	  { "Ref" : "PingTimeout" },
-	  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
-	  "sed \"s/Wait_Between_Pings=2/Wait_Between_Pings=",
-	  { "Ref" : "WaitBetweenPings" },
-	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
-	  "sed \"s/Wait_for_Instance_Stop=60/Wait_for_Instance_Stop=",
-	  { "Ref" : "WaitForInstanceStop" },
-	  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
-	  "sed \"s/Wait_for_Instance_Start=300/Wait_for_Instance_Start=",
-	  { "Ref" : "WaitForInstanceStart" },
-	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
-          "mv /root/nat_monitor.tmp /root/nat_monitor.sh\n",
-          "chmod a+x /root/nat_monitor.sh\n",
-	  "echo '@reboot /root/nat_monitor.sh > /tmp/nat_monitor.log' | crontab\n",
-	  "/root/nat_monitor.sh > /tmp/nat_monitor.log &\n"
-        ]]}}
+		"UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+             "#!/bin/bash -xe\n",
+             "yum update -y aws-cfn-bootstrap\n",
+
+             "# Install the files and packages from the metadata\n",
+             "/opt/aws/bin/cfn-init -v ",
+             "         --stack ", { "Ref" : "AWS::StackName" },
+             "         --resource NAT1Instance ",
+			 "         --configsets InstallAndRun ",
+             "         --region ", { "Ref" : "AWS::Region" }, "\n",
+
+             "# Signal the status from cfn-init\n",
+             "/opt/aws/bin/cfn-signal -e $? ",
+             "         --stack ", { "Ref" : "AWS::StackName" },
+             "         --resource NAT1Instance ",
+             "         --region ", { "Ref" : "AWS::Region" }, "\n"
+        ]]}}  
       }
     },
 
@@ -238,7 +346,7 @@
         "InstanceType" : { "Ref" : "NATNodeInstanceType" } ,
         "KeyName" : { "Ref" : "KeyName" },
 	"IamInstanceProfile" : { "Ref" : "NATRoleProfile" },
-        "SubnetId" : { "Ref" : "PublicSubnet2" },
+        "SubnetId" : { "Ref" : "PublicSubnetB" },
         "SourceDestCheck" : "false",
         "ImageId" : { "Fn::FindInMap" : [ "AWSNATAMI", { "Ref" : "AWS::Region" }, "AMI" ]},
         "SecurityGroupIds" : [{ "Ref" : "NATSecurityGroup" }],
@@ -266,10 +374,10 @@
 	  { "Ref" : "NAT1Instance" },
 	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
 	  "sed \"s/NAT_RT_ID=/NAT_RT_ID=",
-	  { "Ref" : "PrivateRouteTable1" },
+	  { "Ref" : "PrivateRouteTableA" },
 	  "/g\" /root/nat_monitor.tmp > /root/nat_monitor.sh\n",
 	  "sed \"s/My_RT_ID=/My_RT_ID=",
-	  { "Ref" : "PrivateRouteTable2" },
+	  { "Ref" : "PrivateRouteTableB" },
 	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
 	  "sed \"s/EC2_URL=/EC2_URL=https:\\/\\/ec2.",
 	  { "Ref" : "AWS::Region" }, ".amazonaws.com",
@@ -291,8 +399,8 @@
 	  "/g\" /root/nat_monitor.sh > /root/nat_monitor.tmp\n",
           "mv /root/nat_monitor.tmp /root/nat_monitor.sh\n",
           "chmod a+x /root/nat_monitor.sh\n",
-	  "echo '@reboot /root/nat_monitor.sh > /tmp/nat_monitor.log' | crontab\n",
-	  "/root/nat_monitor.sh >> /tmp/nat_monitor.log &\n"
+	  "#echo '@reboot /root/nat_monitor.sh > /tmp/nat_monitor.log' | crontab\n",
+	  "#/root/nat_monitor.sh >> /tmp/nat_monitor.log &\n"
         ]]}}
       }
     },
@@ -333,11 +441,11 @@
     },
     "PrivateRouteTable1" : {
       "Description" : "Private Route Table #1.",
-      "Value" : { "Fn::Join" : [ "", [ { "Ref" : "PrivateRouteTable1" }, " (0.0.0.0/0 -> ", { "Ref" : "NAT1Instance" }, ")" ]] }
+      "Value" : { "Fn::Join" : [ "", [ { "Ref" : "PrivateRouteTableA" }, " (0.0.0.0/0 -> ", { "Ref" : "NAT1Instance" }, ")" ]] }
     },
     "PrivateRouteTable2" : {
       "Description" : "Private Route Table #2.",
-      "Value" : { "Fn::Join" : [ "", [ { "Ref" : "PrivateRouteTable2" }, " (0.0.0.0/0 -> ", { "Ref" : "NAT2Instance" }, ")" ]] }
+      "Value" : { "Fn::Join" : [ "", [ { "Ref" : "PrivateRouteTableB" }, " (0.0.0.0/0 -> ", { "Ref" : "NAT2Instance" }, ")" ]] }
     }
   }
 }

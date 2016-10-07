@@ -19,6 +19,12 @@
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="OpenVPNBgp.template">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="OpenVpnAs.template">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="VPC.template">
       <SubType>Code</SubType>
     </Compile>
