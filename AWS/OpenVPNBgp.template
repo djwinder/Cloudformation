@@ -350,7 +350,7 @@
 					"aws s3 cp /tmp/private-ip s3://o1-vpn-configuration/instances/",{ "Ref" : "AWS::Region" },"/$INSTANCE_ID/\n",
 					"aws s3 cp /tmp/tunnel-ip s3://o1-vpn-configuration/instances/",{ "Ref" : "AWS::Region" },"/$INSTANCE_ID/\n",
 					"aws s3 cp /tmp/vpc-cidr s3://o1-vpn-configuration/instances/",{ "Ref" : "AWS::Region" },"/$INSTANCE_ID/\n",
-					"aws s3 cp /tmp/security-group-ip s3://o1-vpn-configuration/instances/",{ "Ref" : "AWS::Region" },"/$INSTANCE_ID/\n",
+					"aws s3 cp /tmp/security-group-id s3://o1-vpn-configuration/instances/",{ "Ref" : "AWS::Region" },"/$INSTANCE_ID/\n",
 					"aws s3 cp /tmp/bgp-area s3://o1-vpn-configuration/instances/",{ "Ref" : "AWS::Region" },"/$INSTANCE_ID/\n"
 				  
 					]]
@@ -371,7 +371,7 @@
         "ImageId" : { "Fn::FindInMap" : [ "AWSNATAMI", { "Ref" : "AWS::Region" }, "AMI" ]},
         "SecurityGroupIds" : [{ "Ref" : "NATSecurityGroup" }],
         "Tags" : [
-          { "Key" : "Name", "Value" : "NAT #1" },
+          { "Key" : "Name", "Value" : "VPN AZa" },
 		  { "Key": "VPNConfiguration", "Value" : "Unconfigured" }
         ],
 		"UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
